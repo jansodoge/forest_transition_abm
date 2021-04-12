@@ -1,0 +1,168 @@
+---
+title: "Spatial Temporal Heterogeneity of Forest Transitions in South-Western Mexico"
+author: "Jan Sodoge"
+date: "3/23/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(sf)
+library(raster)
+library(dplyr)
+library(spData)
+library(rlist)
+library(readr)
+```
+
+Code that is not relevant/not used within the thesis yet. Investigates the heterogeneity of the observed forest transition time series data by considering municipality level data
+
+
+
+
+Gather data on municipalities as shape file
+```{r}
+municipality_data <- sf::read_sf("municipality_data/mun2019gw.shp")
+states <- sf::read_sf("states/dest2019gw.shp")
+
+
+
+
+```
+
+
+
+
+```{r}
+case_study_states <- states[states$NOM_ENT %in% c("Guerrero", "Oaxaca", "Jalisco", "Michoacán de Ocampo"),]
+case_study_municipalities <- st_intersects(municipality_data, case_study_states)
+
+municipalities <-  lengths(case_study_municipalities) > 0
+case_study_municipalities <- municipality_data[municipalities, ]
+
+```
+
+
+
+Only use the start and end-time-point for less calculation efforts
+```{r}
+
+
+
+#2001 geodata
+geo_data_2001 <- sf::read_sf("2001/usv250ks2gw.shp")
+shape_areas <- st_area(geo_data_2001)
+geo_data_2001$area <- shape_areas
+geo_data_2001$year <- 2001
+
+
+tmp <- st_intersects(geo_data_2001, case_study_states)
+tmp <-  lengths(tmp) > 0
+geo_data_2001 <- geo_data_2001[tmp, ]
+
+
+
+
+
+
+#2016 geodata
+geo_data_2016 <- sf::read_sf("2016/usv250s6gw.shp")
+shape_areas <- st_area(geo_data_2016)
+geo_data_2016$area <- shape_areas
+geo_data_2016$year <- 2016
+
+
+tmp <- st_intersects(geo_data_2016, case_study_states)
+tmp <-  lengths(tmp) > 0
+geo_data_2016 <- geo_data_2016[tmp, ]
+
+
+
+```
+
+
+
+
+
+
+```{r}
+
+land_cover_types <- read_csv("land_cover_types.csv") %>% 
+  filter(type != "null")
+
+
+
+geo_data_2001 <- geo_data_2001 %>% 
+  left_join(land_cover_types, by = c("descripcio"="descripcio"))
+
+
+
+
+geo_data_2016 <- geo_data_2016 %>% 
+  left_join(land_cover_types, by = c("DESCRIPCIO"="descripcio")) %>% 
+  mutate(descripcio = DESCRIPCIO)
+
+
+#long_geodata_list <- list(geo_data_2001, geo_data_2005, geo_data_2009, geo_data_2013, geo_data_2016)
+
+long_geodata_list <- list(geo_data_2001, geo_data_2016)
+
+
+```
+
+```{r}
+
+
+generate_plot_data_for_state <- function(state_name, long_geodata_list){
+  
+  oaxaca = case_study_municipalities[case_study_municipalities$COV_ID == state_name, ]
+  intersected_geodata_list <- list()
+  for(geodata in long_geodata_list){
+    intersect <- sf::st_intersection(oaxaca, geodata)
+    intersected_geodata_list <- list.append(intersected_geodata_list, intersect)
+  }
+  
+  
+  spatial_attributes_dataset <- data.frame()
+  for(data in intersected_geodata_list){
+    
+    tmp_data <- data
+    st_geometry(tmp_data) <- NULL
+    tmp_data <- as.data.frame(tmp_data)
+    tmp <- tmp_data %>% 
+      dplyr::select(year, type, area)
+    spatial_attributes_dataset <- dplyr::bind_rows(spatial_attributes_dataset, tmp_data)
+  }
+  
+return(spatial_attributes_dataset)  
+}
+
+```
+
+
+
+
+
+
+
+```{r, message=FALSE}
+
+#For each state calculate area covered by particular land-cover type
+results <- data.frame()
+for(elem in case_study_municipalities$COV_ID){
+  a <- Sys.time()
+  
+  tmp <- generate_plot_data_for_state(elem, long_geodata_list)
+  tmp$state_measured <- elem
+  results <- dplyr::bind_rows(results, tmp)
+  print(paste(elem, "measured in ", Sys.time()-a))
+  print(match(elem, case_study_municipalities$COV_ID))
+  
+}
+
+
+
+write.csv(results, "individual_heterogeneity.csv")
+
+```
+

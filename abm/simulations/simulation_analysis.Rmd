@@ -1,0 +1,664 @@
+---
+title: "Analysis"
+author: "Jan Sodoge"
+date: "3/14/2021"
+output:
+  html_document:
+    df_print: paged
+  pdf_document:
+    keep_tex: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+library(tidyverse)
+library(readr)
+library(ggpubr)
+library(stargazer)
+library(ggsci)
+load("pers_life_filtered.Rdata") # contains data for calibrating with observed migration rates
+
+
+```
+
+```{r}
+#create an object of the land-cover data that we interpolated in the land-cover scripts
+empirical_data <- data.frame(step = seq(1,17),
+                             agriculture_cover = 
+                               c(0, 0.016, 0.032, 0.049, 0.06, 0.076, 0.08, 0.09, 0.1,
+                                 0.11, 0.11, 0.11, 0.12, 0.11, 0.11, 0.1, 0.1))
+```
+
+
+
+
+
+
+# Calibration/Validation
+
+
+```{r}
+abm_household_individual_levels_experiment_table <- read_csv("abm_household_individual_levels experiment_2_new-table.csv", 
+    skip = 6)
+```
+
+
+
+
+# Measure goodness-of-fit
+Describes and measures differences between projected system behavior and observed empirical data
+```{r}
+
+
+gof_data <- abm_household_individual_levels_experiment_table %>% 
+  mutate(projected_agriculture_land = `((sum [agriculture_land] of households) - t_0_land_amount ) / t_0_land_amount`) %>% 
+  dplyr::left_join(empirical_data, by = c("[step]" = "step")) %>% 
+  mutate(gof_difference_step = abs(agriculture_cover - projected_agriculture_land)) %>%  # measure differences between projected and observed
+  group_by(deforestation_per_step_worker_ha, scaling_param_migration, remittances_usage_scaling_param) %>% 
+    summarise(sum_gof_differene = sum(gof_difference_step, na.rm = TRUE)) %>% 
+  arrange(desc(-sum_gof_differene)) 
+  
+```
+
+
+Visualize settings with best parametrization
+```{r, fig.width=10, fig.height=3}
+#select the best fit scenario
+best_fit_scenario <- gof_data %>% 
+  head(1)
+
+gof_1 <- abm_household_individual_levels_experiment_table %>% 
+  dplyr::semi_join(best_fit_scenario, by = c("deforestation_per_step_worker_ha" = "deforestation_per_step_worker_ha",
+                                             "scaling_param_migration" = "scaling_param_migration",
+                                             "remittances_usage_scaling_param" = "remittances_usage_scaling_param")) %>% 
+  mutate(agricultur_land_projected = `((sum [agriculture_land] of households) - t_0_land_amount ) / t_0_land_amount`) %>% 
+  ggplot(aes(x = as.factor(`[step]`), y = agricultur_land_projected))+
+  geom_boxplot()+
+  geom_line(data = empirical_data, aes(x = step, agriculture_cover))+
+  xlab("Tick")+
+  ylab("Share of land occupied by agricultural land ")+
+    theme_minimal()
+
+
+mig_empirical_data <- pers_filtered %>% 
+  mutate(ustrips = ifelse(ustrips == 0 & dotrips == 0, 0,1)) %>% 
+  group_by(surveyyr) %>% 
+ summarise(migrants = mean(ustrips)) %>% 
+  dplyr::filter(surveyyr > 1994 & surveyyr < 2016) 
+
+mig_empirical_data$steps <- seq(0,16)
+
+
+gof_2 <- abm_household_individual_levels_experiment_table %>% 
+  dplyr::semi_join(best_fit_scenario, by = c("deforestation_per_step_worker_ha" = "deforestation_per_step_worker_ha",
+                                             "scaling_param_migration" = "scaling_param_migration",
+                                             "remittances_usage_scaling_param" = "remittances_usage_scaling_param")) %>% 
+  mutate(migrants_share_pop = `count individuals with [member_migrated = TRUE] / count individuals`) %>% 
+  ggplot(aes(x = as.factor(`[step]`), y = migrants_share_pop))+
+  geom_boxplot()+
+  xlab("Tick")+
+  ylab("Share of migrants of total population [%]")+
+  ggsci::scale_color_uchicago()+
+  theme_minimal()+
+  
+  geom_smooth(method = lm, data = mig_empirical_data, aes(x = steps, y = migrants))
+
+
+ggarrange(gof_1, gof_2)
+  
+```
+
+
+
+
+
+```{r, fig.width=12, fig.height=8}
+
+
+
+validation_p1 <- abm_household_individual_levels_experiment_table %>% 
+  dplyr::semi_join(best_fit_scenario, by = c("deforestation_per_step_worker_ha" = "deforestation_per_step_worker_ha",
+                                             
+                                             "remittances_usage_scaling_param" = "remittances_usage_scaling_param")) %>% 
+  mutate(agriculture_land_projected = `((sum [agriculture_land] of households) - t_0_land_amount ) / t_0_land_amount`) %>% 
+  #dplyr::filter(remittances_usage_scaling_param == 0) %>% 
+  
+      dplyr::filter(scaling_param_migration  %in% c(0.4, 0.8, 1.2, 1.6, 2)) %>% 
+
+  
+  group_by(deforestation_per_step_worker_ha, scaling_param_migration, `[step]`) %>% 
+  summarise(agriculture_land_projected = mean(agriculture_land_projected)) %>% 
+  ggplot(aes(x = as.factor(`[step]`), y = agriculture_land_projected, group = as.factor(scaling_param_migration), color =  as.factor(scaling_param_migration)))+
+  geom_line()+
+  guides(color=guide_legend(title="Migration rates"))+
+  xlab("Tick")+
+  ylab("Projected increase of agricultural land [%]")+
+  theme_minimal()+
+  scale_color_uchicago()+
+  theme(legend.position = "bottom")
+
+
+validation_p4 <- abm_household_individual_levels_experiment_table %>% 
+  dplyr::semi_join(best_fit_scenario, by = c("deforestation_per_step_worker_ha" = "deforestation_per_step_worker_ha",
+                                             
+                                             "remittances_usage_scaling_param" = "remittances_usage_scaling_param")) %>% 
+  mutate(migrants_share_pop = `count individuals with [member_migrated = TRUE] / count individuals`) %>% 
+  #dplyr::filter(remittances_usage_scaling_param == 0) %>% 
+  
+  
+      dplyr::filter(scaling_param_migration  %in% c(0.4, 0.8, 1.2, 1.6, 2)) %>% 
+
+  group_by(deforestation_per_step_worker_ha, scaling_param_migration, `[step]`) %>% 
+  summarise(migrants_share_pop = mean(migrants_share_pop)) %>% 
+  ggplot(aes(x = as.factor(`[step]`), y = migrants_share_pop, group = as.factor(scaling_param_migration), color =  as.factor(scaling_param_migration)))+
+  geom_line()+
+   scale_color_uchicago()+
+  guides(color=guide_legend(title="Migration rates"))+
+  xlab("Tick")+
+  ylab("Share of migrants of total population [%]")+
+  labs(title = "Impact of migration rates on land-use change")+
+  theme_minimal()+
+    theme(legend.position = "bottom")
+
+
+
+
+validation_p2 <- abm_household_individual_levels_experiment_table %>% 
+  dplyr::semi_join(best_fit_scenario, by = c("scaling_param_migration" = "scaling_param_migration",
+                                             
+                                             "remittances_usage_scaling_param" = "remittances_usage_scaling_param")) %>% 
+  
+  mutate(migrants_share_pop = `count individuals with [member_migrated = TRUE] / count individuals`,
+    agriculture_land_projected = `((sum [agriculture_land] of households) - t_0_land_amount ) / t_0_land_amount`) %>% 
+  #dplyr::filter(remittances_usage_scaling_param == 0) %>% #needs to be fixed in later versions
+  dplyr::filter(deforestation_per_step_worker_ha  %in% c(0.01, 0.05, 0.09, 0.13, 0.17)) %>% 
+
+  group_by(deforestation_per_step_worker_ha, scaling_param_migration, `[step]`) %>% 
+  summarise(agriculture_land_projected = mean(agriculture_land_projected)) %>% 
+  ggplot(aes(x = as.factor(`[step]`), y = agriculture_land_projected, group = as.factor(deforestation_per_step_worker_ha), color =  as.factor(deforestation_per_step_worker_ha)))+
+  geom_line()+
+  guides(color=guide_legend(title="Deforestation Rates"))+
+     scale_color_uchicago()+
+
+  xlab("Tick")+
+  ylab("Projected increase of agricultural land [%]")+
+  theme_minimal()+
+    theme(legend.position = "bottom")
+
+
+
+
+validation_p3 <- abm_household_individual_levels_experiment_table %>% 
+  dplyr::semi_join(best_fit_scenario, by = c("deforestation_per_step_worker_ha" = "deforestation_per_step_worker_ha",
+                                             
+                                             "scaling_param_migration" = "scaling_param_migration")) %>% 
+  mutate(agriculture_land_projected = `((sum [agriculture_land] of households) - t_0_land_amount ) / t_0_land_amount`) %>% 
+  dplyr::filter(remittances_usage_scaling_param  %in% c(0,  0.4, 1)) %>% 
+
+    group_by(deforestation_per_step_worker_ha, remittances_usage_scaling_param, `[step]`) %>% 
+  summarise(agriculture_land_projected = mean(agriculture_land_projected)) %>% 
+  ggplot(aes(x = as.factor(`[step]`), y = agriculture_land_projected, group = as.factor(remittances_usage_scaling_param), color =  as.factor(remittances_usage_scaling_param)))+
+  geom_line()+
+  guides(color=guide_legend(title="Remittances Usage for Agriculture Investment Rate"))+
+  xlab("Tick")+
+  ylab("Projected increase of agricultural land [%]")+
+  theme_minimal()+
+  scale_color_uchicago()+
+  theme(legend.position = "bottom")
+
+
+
+ggarrange(validation_p1, validation_p2, validation_p3, validation_p4)
+
+
+```
+
+
+
+
+
+# Effects of socio-economic heterogeneity and resource distribution
+
+
+
+
+
+
+### Effects of relative economic inequality 
+
+
+
+```{r, fig.width=12, fig.height=8, message=FALSE, warning=FALSE}
+p1 <- read_csv("abm_household_individual_levels different_gini_levels_relativ-table.csv", 
+    skip = 6) %>% 
+    mutate(agriculture_land_projected = `((sum [agriculture_land] of households) - t_0_land_amount ) / t_0_land_amount`) %>% 
+  dplyr::filter(desired_gini_level %in% c(5,45)) %>% 
+  group_by(homogeneity_mode, `[step]`) %>% 
+  ggplot(aes(x = as.factor(`[step]`), y = agriculture_land_projected, fill = as.factor(desired_gini_level)))+
+  geom_boxplot()+
+   theme_minimal()+
+       guides(fill=guide_legend(title="Gini-Index"))+
+  xlab("Tick")+
+    ylab("Increase of agricultural land [%]")+
+
+  
+
+  scale_fill_uchicago()+
+  theme(legend.position = "bottom")
+
+
+
+p2 <-  read_csv("abm_household_individual_levels different_gini_levels_relativ-table.csv", 
+    skip = 6) %>%
+  filter(`[step]` == 15) %>% 
+  mutate(workers_rural = `sum [workers] of households`) %>% 
+  mutate(migrants_share_pop = `count individuals with [member_migrated = TRUE] / count individuals`) %>% 
+  ggplot(aes(x = workers_rural, y = migrants_share_pop, color = as.factor(desired_gini_level)))+
+  geom_point(alpha=0.4)+
+    geom_smooth( aes(x = workers_rural, y = migrants_share_pop), method=lm)+
+  xlab("Rural Workers")+
+    ylab("Share of migrated populatiion")+
+         guides(color=guide_legend(title="Gini-Index"))+
+
+
+  scale_color_uchicago()+
+  theme(legend.position = "bottom")
+
+
+p3 <-  read_csv("abm_household_individual_levels different_gini_levels_relativ-table.csv", 
+    skip = 6) %>%
+  dplyr::filter(`[step]` == 14) %>% 
+  dplyr::filter(desired_gini_level %in% c(5,45)) %>% 
+    ggplot(aes(y =global_deforested_land, x =global_abandoned_land, color = as.factor(desired_gini_level) ))+
+  geom_point(alpha=0.4)+
+  geom_smooth(method=lm)+
+  xlim(c(195, 207))+
+  xlab("Total Abandoned Land")+
+  ylab("Total Deforested Land")+
+  scale_color_uchicago()+
+  theme(legend.position = "bottom")+
+  guides(color=guide_legend(title="Gini-Index"))
+
+
+
+
+p4 <- read_csv("abm_household_individual_levels different_gini_levels_relativ-table.csv", 
+    skip = 6) %>%
+  mutate(workers_rural = `sum [workers] of households`) %>% 
+  group_by(`[step]`,desired_gini_level ) %>% 
+  #summarise(workers_rural = median(workers_rural)) %>% 
+  ggplot(aes(x = as.factor(`[step]`), y = workers_rural, fill = as.factor(desired_gini_level)))+
+  geom_boxplot()+
+  xlab("Tick")+
+  theme_minimal()+
+  guides(fill=guide_legend(title="Gini-Index"))+
+  ylab("Rural Workers")+
+
+  scale_fill_uchicago()+
+  theme(legend.position = "bottom")
+
+
+
+ggarrange(p1, p2, p3, p4)
+
+```
+
+
+Calculate t-test and compare mean values of produced statistics
+```{r}
+read_csv("abm_household_individual_levels different_gini_levels_relativ-table.csv", 
+    skip = 6) %>%
+  filter(`[step]` == 15) %>% 
+  mutate(workers_rural = `sum [workers] of households`) %>% 
+  mutate(migrants_share_pop = `count individuals with [member_migrated = TRUE] / count individuals`) %>%
+  group_by(desired_gini_level) %>% 
+  summarise(mean_migrants_share_pop = mean(migrants_share_pop),
+            mean_workers_rural = mean(workers_rural))
+
+
+
+#Run some two-sided t-tests
+sample_gini5 <- read_csv("abm_household_individual_levels different_gini_levels_relativ-table.csv", 
+    skip = 6) %>%
+  filter(`[step]` == 15) %>% 
+  filter(desired_gini_level == 5) %>% 
+  mutate(workers_rural = `sum [workers] of households`) %>% 
+  mutate(migrants_share_pop = `count individuals with [member_migrated = TRUE] / count individuals`)
+
+
+sample_gini45 <- read_csv("abm_household_individual_levels different_gini_levels_relativ-table.csv", 
+    skip = 6) %>%
+  filter(`[step]` == 15) %>% 
+  filter(desired_gini_level == 45) %>% 
+  mutate(workers_rural = `sum [workers] of households`) %>% 
+  mutate(migrants_share_pop = `count individuals with [member_migrated = TRUE] / count individuals`)
+
+
+
+
+t.test(x = sample_gini5$migrants_share_pop, y = sample_gini45$migrants_share_pop, alternative = "two.sided")
+t.test(x = sample_gini5$workers_rural, y = sample_gini45$workers_rural, alternative = "two.sided")
+t.test(x = sample_gini5$global_deforested_land, y = sample_gini45$global_deforested_land, alternative = "two.sided")
+t.test(x = sample_gini5$global_abandoned_land, y = sample_gini45$global_abandoned_land, alternative = "two.sided")
+
+
+
+
+read_csv("abm_household_individual_levels different_gini_levels_relativ-table.csv", 
+    skip = 6) %>%
+  dplyr::filter(`[step]` == 14) %>% 
+  dplyr::filter(desired_gini_level %in% c(5,45)) %>% 
+  group_by(desired_gini_level) %>% 
+  summarise(mean_abandoned_land = mean(global_abandoned_land),
+            mean_deforested_land = mean(global_deforested_land))
+
+
+  
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Inequality developments over time
+```{r}
+read_csv("abm_household_individual_levels gini_phase_diagram-table.csv",  skip = 6) %>% 
+  dplyr::filter(`[step]` == 15) %>% 
+  ggplot(aes(y = `gini-index-reserve-relative`,  x = (desired_gini_level),
+             fill = as.factor(desired_gini_level)))+
+  geom_boxplot()+
+   geom_abline(slope = 1, intercept = 0, color = "red", linetype = "dashed")+
+  ggsci::scale_fill_uchicago()+
+  xlab("Gini-Index at t = 0")+
+  ylab("Gini-Index at t= 16")+
+  theme_minimal()+
+  xlim(c(0,50))+
+    ylim(c(0,50))+
+
+  theme(legend.position = "none",
+        aspect.ratio = 1)+
+  annotate("text", x = 10, y = 5, label = "X=Y", color="red")
+ 
+
+```
+
+
+```{r}
+read_csv("abm_household_individual_levels gini_phase_diagram-table.csv",  skip = 6) %>% 
+  ggplot(aes(y = `gini-index-reserve-relative`,  x = `[step]`,
+             color = as.factor(desired_gini_level)))+
+  geom_jitter(alpha = 0.3)+
+   ggsci::scale_color_uchicago()+
+  theme_minimal()+
+    ylim(c(0,50))+
+  xlab("Tick")+
+  ylab("Gini coefficient")+
+
+  theme(legend.position = "bottom")+
+    guides(color=guide_legend(title="Gini coefficient t_0"))
+
+
+  
+  
+```
+
+
+
+
+
+
+
+
+
+
+
+
+# Appendix of non used snippets
+
+
+
+
+Within a first investigation of the effects of socio-economic heterogeneity we compare two scenarios. Within the first, we set the agricultural land of each household to the mean value of agriculture land per household observed within our sample. In the second scenario, we use the observed data which reflects inequality among the households concerning the possessed land (see Fig..). Concerning the agriculture land-cover, we find that the first scenario prodcued lower levels of total deforestation compared to the second scenario. Also, the variation of potential outcomes is greater in the first scenario. 
+
+
+
+
+
+
+
+# Heterogeneity in forest transitons analysis 
+
+
+```{r, message=FALSE, warning=FALSE, eval=FALSE}
+files <- list.files("../individual_sim_runs_exports/default", full.names = TRUE)
+results <- data.frame()
+for(file in files){
+  tick_number <- stringr::str_extract(file, "run.{1,2}with")
+  tick_number <- stringr::str_extract(tick_number, "[0-9]{1,20}")
+  sim_number <- as.numeric(stringr::str_extract(file, "[0-9]{1,5}"))
+  tmp <- read_csv(file, 
+    skip = 12) %>% 
+  dplyr::filter(breed == "{breed households}") %>% 
+    mutate(simulation_id = sim_number,
+           tick  = as.numeric(tick_number)) %>% 
+    select(tick, who, agriculture_land, simulation_id, hh_members, workers, migrated_hh_members)
+  
+  
+
+  results <- dplyr::bind_rows(results,
+                              tmp)
+}
+
+results$scenario <- "default"
+files <- list.files("../individual_sim_runs_exports/equality", full.names = TRUE)
+results_b <- data.frame()
+
+for(file in files){
+  tick_number <- stringr::str_extract(file, "run.{1,2}with")
+  tick_number <- stringr::str_extract(tick_number, "[0-9]{1,20}")
+  sim_number <- as.numeric(stringr::str_extract(file, "[0-9]{1,5}"))
+  tmp <- read_csv(file, 
+    skip = 12) %>% 
+  dplyr::filter(breed == "{breed households}") %>% 
+    mutate(simulation_id = sim_number,
+           tick  = as.numeric(tick_number))%>% 
+    select(tick, who, agriculture_land, simulation_id, hh_members, workers, migrated_hh_members)
+  
+  
+  results_b <- dplyr::bind_rows(results_b,
+                              tmp)
+}
+
+results_b$scenario <- "equality"
+results_overall <- dplyr::bind_rows(results, results_b)
+```
+
+
+
+
+
+
+
+```{r, eval=FALSE}
+heterogneity_in_deforestation <- results_overall %>% 
+  pivot_wider(id_cols = c(who, simulation_id, scenario),
+              names_from = tick,
+              names_prefix = "land_tick",
+              values_from = agriculture_land) %>% 
+  mutate(deforestation = land_tick14 - land_tick0)
+
+
+
+
+  ggplot(data = heterogneity_in_deforestation, aes(x = deforestation, fill = scenario), color = "white")+
+  geom_histogram(position = "dodge")+
+  ggsci::scale_fill_uchicago()+  
+  ylab("Number of households")+
+  xlab("Net Deforestation  [t_0, t_14]")  +
+        theme_minimal()
+
+ 
+
+  
+ 
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Run a linear regression model to predict deforestation based on HH attributes
+```{r, message=FALSE, eval=FALSE}
+
+initial_forest_land <- results_overall %>% 
+  dplyr::filter(tick == 0 ) %>% 
+  mutate(initial_land = agriculture_land) %>% 
+  select(who, initial_land, hh_members, workers, migrated_hh_members, scenario)
+
+
+
+
+regression_data <- results_overall %>% 
+  dplyr::filter(tick == 0 | tick == 14 ) %>% 
+  select(tick, who, agriculture_land, simulation_id, scenario) %>% 
+  pivot_wider(names_from = tick, values_from = agriculture_land, names_prefix = "gini_") %>% 
+  mutate(complete_deforestation = gini_14 - gini_0) %>% 
+    dplyr::left_join(initial_forest_land) 
+
+  
+regression_data_default <- dplyr::filter(regression_data, scenario == "default")
+regression_data_equality <- dplyr::filter(regression_data, scenario == "equality")
+
+
+
+m1_default <- lm(complete_deforestation ~ initial_land, data = regression_data_default)
+m2_default <- lm(complete_deforestation ~ initial_land + workers , data = regression_data_default)
+m3_default <- lm(complete_deforestation ~ initial_land  * workers , data = regression_data_default)
+
+
+
+
+m1_equality <- lm(complete_deforestation ~ initial_land, data = regression_data_equality)
+m2_equality <- lm(complete_deforestation ~ initial_land + workers , data = regression_data_equality)
+m3_equality <- lm(complete_deforestation ~ initial_land  * workers , data = regression_data_equality)
+
+
+
+stargazer::stargazer(m1_default, m2_default, m3_default, 
+                     m1_equality, m2_equality, m3_equality,
+                     
+                     type = "text")
+
+
+```
+
+
+### Total land inequality (which is not used in the thesis)
+
+
+Based on the specified algorithm, we use a counterfactual simulation to compare the simulated land-use change between the original land distribution and a re-distributed version with a Gini-index approximating 5 percent. Figure...shows that changing the relative inequality has few effects in counterfactual simulations on the observed land-cover change. Instead, when changing the total land inequality among households we observe some changes where more equal societies produce fewer agriculture expansion. We can use a two-sided sample t-test to confirm the significance of difference within the latter time-steps of this simulation.
+
+
+
+```{r, fig.width=12, fig.height=8, eval=FALSE}
+p1 <-  read_csv("abm_household_individual_levels different_gini_levels_total-table.csv", 
+    skip = 6) %>% 
+    mutate(agriculture_land_projected = `((sum [agriculture_land] of households) - t_0_land_amount ) / t_0_land_amount`) %>% 
+  dplyr::filter(desired_gini_level %in% c(5,45)) %>% 
+  group_by(homogeneity_mode, `[step]`) %>% 
+  ggplot(aes(x = as.factor(`[step]`), y = agriculture_land_projected, fill = as.factor(desired_gini_level)))+
+  geom_boxplot()+
+  scale_fill_uchicago()+
+  xlab("Tick")+
+  ylab("Projected increase of agricultural land [%]")+
+
+  guides(fill=guide_legend(title="Gini-Index"))+
+  theme_minimal()+
+    theme(legend.position = "bottom")
+   
+
+
+p2 <- read_csv("abm_household_individual_levels different_gini_levels_total-table.csv", 
+    skip = 6) %>% 
+  dplyr::filter(`[step]` == 14) %>% 
+  dplyr::filter(desired_gini_level %in% c(5,45)) %>% 
+    ggplot(aes(y =global_deforested_land, x =global_abandoned_land, color = as.factor(desired_gini_level) ))+
+  geom_point()+
+  geom_smooth(method=lm)+
+  xlim(c(195, 207))+
+  xlab("Total Abandoned Land")+
+  ylab("Total Deforested Land")+
+  
+  
+  scale_color_uchicago()+
+  theme(legend.position = "bottom")+
+   guides(color=guide_legend(title="Gini-Index"))
+
+
+
+p3 <-  read_csv("abm_household_individual_levels different_gini_levels_total-table.csv", 
+    skip = 6) %>%
+  filter(`[step]` == 14) %>% 
+  filter(desired_gini_level %in% c(5,45)) %>% 
+  mutate(workers_rural = `sum [workers] of households`) %>% 
+  mutate(migrants_share_pop = `count individuals with [member_migrated = TRUE] / count individuals`) %>% 
+  ggplot(aes(x = workers_rural, y = migrants_share_pop, color = as.factor(desired_gini_level)))+
+  geom_point()+
+     guides(color=guide_legend(title="Gini-Index"))+
+     xlab("Rural Workers")+
+  ylab("Share of migrants of agent population")+
+
+
+  scale_color_uchicago()+
+  theme(legend.position = "bottom")
+
+
+p4 <- read_csv("abm_household_individual_levels different_gini_levels_total-table.csv", 
+    skip = 6) %>%
+  filter(desired_gini_level %in% c(5,45)) %>% 
+  mutate(workers_rural = `sum [workers] of households`) %>% 
+  group_by(`[step]`,desired_gini_level ) %>% 
+  #summarise(workers_rural = median(workers_rural)) %>% 
+  ggplot(aes(x = as.factor(`[step]`), y = workers_rural, fill = as.factor(desired_gini_level)))+
+  geom_boxplot()+
+     guides(fill=guide_legend(title="Gini-Index"))+
+   xlab("Tick")+
+   ylab("Rural Workers")+
+    theme_minimal()+
+  scale_fill_uchicago()+
+  theme(legend.position = "bottom")
+
+
+ggarrange(p1, p2, p3, p4)
+
+```

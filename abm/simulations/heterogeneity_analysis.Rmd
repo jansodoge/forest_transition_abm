@@ -1,0 +1,163 @@
+---
+title: "Heterogeneity Analysis"
+author: "Jan Sodoge"
+date: "3/27/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(readr)
+
+```
+
+
+
+
+List files
+```{r, message=FALSE, warning=FALSE}
+files <- list.files("../individual_sim_runs_exports", full.names = TRUE)
+
+results <- data.frame()
+
+for(file in files){
+  
+  tick_number <- stringr::str_extract(file, "run.{1,2}with")
+  tick_number <- stringr::str_extract(tick_number, "[0-9]{1,20}")
+  
+  sim_number <- as.numeric(stringr::str_extract(file, "[0-9]{1,5}"))
+  
+  
+  tmp <- read_csv(file, 
+    skip = 12) %>% 
+  dplyr::filter(breed == "{breed households}") %>% 
+    mutate(simulation_id = sim_number,
+           tick  = as.numeric(tick_number))
+  
+  
+  results <- dplyr::bind_rows(results,
+                              tmp)
+}
+
+```
+
+
+```{r}
+
+results %>% 
+  group_by(tick) %>% 
+  summarise(mean_land = mean(agriculture_land)) %>% 
+  ggplot(aes(x = as.factor(tick), y = mean_land))+
+  geom_point()
+```
+
+
+
+
+```{r}
+results %>% 
+  group_by(tick) %>% 
+  summarise(mean_land = sd(agriculture_land)) %>% 
+  ggplot(aes(x = as.factor(tick), y = mean_land))+
+  geom_point()
+```
+Individual heterogeneity for each time-step
+```{r}
+results %>% 
+  group_by(who) %>% 
+  mutate(def_rate = agriculture_land - lag(agriculture_land)) %>% 
+  select(who, def_rate) %>% 
+  drop_na() %>% 
+  filter(def_rate > -2 && def_rate < 2) %>% 
+  ggplot(aes(x = def_rate))+ 
+  geom_histogram()
+
+```
+
+
+Heterogeneity in entire simulation per household
+```{r}
+
+
+results %>% 
+  dplyr::filter(tick == 0 | tick == 14 ) %>% 
+  select(who, agriculture_land, tick) %>% 
+  group_by(who) %>% 
+  mutate(complete_deforestation = agriculture_land - lag(agriculture_land)) %>% 
+  drop_na(complete_deforestation) %>% 
+  dplyr::filter(complete_deforestation > -3) %>% 
+  ggplot(aes(x = complete_deforestation))+ 
+  geom_histogram(binwidth = 0.2, color = "white")+
+  theme_classic()+
+  geom_vline(aes(xintercept = median(complete_deforestation)), color = "red", linetype = "dashed")+
+  xlab("Net agricultural expansion of households")+
+  ylab("Number of households")
+ 
+
+```
+
+
+
+
+```{r, message=FALSE}
+initial_forest_land <- results %>% 
+  dplyr::filter(tick == 0 ) %>% 
+  mutate(initial_land = agriculture_land) %>% 
+  select(who, initial_land)
+
+
+
+median_initial_land <- median(initial_forest_land$initial_land)
+
+
+results %>% 
+  dplyr::filter(tick == 0 | tick == 14 ) %>% 
+  select(who, agriculture_land, tick) %>% 
+  group_by(who) %>% 
+  mutate(complete_deforestation = agriculture_land - lag(agriculture_land)) %>% 
+  drop_na(complete_deforestation) %>% 
+  dplyr::left_join(initial_forest_land) %>% 
+  mutate(rel_land_measure = ifelse(initial_land > median_initial_land, "above", "below")) %>%
+  ggplot(aes(x = complete_deforestation))+ 
+  geom_histogram()+
+   facet_wrap(~ as.factor(rel_land_measure))+
+  theme_classic()
+ 
+```
+
+
+
+
+
+
+Run a linear regression model to predict deforestation based on HH attributes
+```{r, message=FALSE}
+
+initial_forest_land <- results %>% 
+  dplyr::filter(tick == 0 ) %>% 
+  mutate(initial_land = agriculture_land) %>% 
+  select(who, initial_land, hh_members, workers, migrated_hh_members)
+
+regression_data <- results %>% 
+  dplyr::filter(tick == 0 | tick == 14 ) %>% 
+  select(who, agriculture_land, tick) %>% 
+  group_by(who) %>% 
+  mutate(complete_deforestation = agriculture_land - lag(agriculture_land)) %>% 
+  drop_na(complete_deforestation) %>% 
+  dplyr::left_join(initial_forest_land) 
+
+
+
+m1 <- lm(complete_deforestation ~ initial_land, data = regression_data)
+m2 <- lm(complete_deforestation ~ initial_land + workers, data = regression_data)
+
+m3 <- lm(complete_deforestation ~ initial_land  * workers, data = regression_data)
+
+
+
+stargazer::stargazer(m1, m2, m3, type = "text")
+
+
+```
+

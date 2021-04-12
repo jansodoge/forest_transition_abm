@@ -1,0 +1,149 @@
+---
+title: "Land-cover analysis of results"
+author: "Jan Sodoge"
+date: "3/6/2021"
+output: html_document
+---
+
+This script visualizes the GIS analysis results from Land Cover of the Specified Case study region.
+Generates plot and table for thesis explanandum data
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readr)
+library(tidyverse)
+library("ggsci")
+library("ggplot2")
+library("gridExtra")
+library(imputeTS)
+
+```
+
+
+Read in the data generated within spatial_landcover_analysis.R
+```{r, message=FALSE}
+gis_analysis_data <- read_csv("gis_analysis_data.csv")
+
+
+land_covers <- gis_analysis_data %>% 
+  select(state_measured, type, year, area)
+  
+```
+
+
+Select data for the states identified with our case study and plot the vegetation types relevant to this study i.e. forest and agriculture
+```{r, message=FALSE}
+transition_curves <- land_covers %>% 
+  filter(state_measured %in% c("Guerrero", "Oaxaca", "Jalisco", "Michoacán de Ocampo")) %>%
+  filter((type %in% c("forest", "agriculture"))) %>% 
+  dplyr::group_by(year, type) %>% 
+  dplyr::summarise(sum = as.double(sum(area))) 
+  
+  
+  
+plot_a <-   ggplot(data = transition_curves, aes(x = year, y = sum/1000000, fill = type, color = type))+
+  geom_line()+
+  xlab("Year")+
+  ylab("Land cover in [km²]")+
+  theme_bw()+
+  scale_color_npg()+
+    theme(legend.position = "none")+
+  labs(color = "Land Cover ")
+
+```
+
+```{r}
+
+
+transition_curves <- transition_curves %>% 
+  mutate(sum = sum/1000000) # get km²
+
+
+
+
+plot_b <- transition_curves %>% 
+  group_by(type) %>% 
+  mutate(pct_diff = (sum/first(sum)-1)*100) %>% 
+  ggplot(aes(x = year, y = pct_diff, color = type, fill = type))+
+  geom_line()+
+  xlab("Year")+
+  ylab("Land cover change [%]")+
+  theme_bw()+
+  ggsci::scale_color_uchicago()+
+  labs(color = "Land Cover ")+
+  theme(legend.position = "bottom")
+
+
+```
+
+
+
+
+```{r}
+library(ggpubr)
+ggarrange(plot_a, plot_b,
+          legend = "top")
+
+
+```
+
+Generate Table with values for appendix
+```{r}
+
+
+library(xtable)
+
+transition_curves %>% 
+  arrange(desc(type)) %>% 
+  group_by(type) %>% 
+   mutate(pct_diff = (sum/first(sum)-1)*100) %>% 
+  mutate('Year' = year,
+         'Land Cover Type' = type,
+         'Area [km²]' = sum,
+         'Land Cover Change [%], ref. 2001' = pct_diff) %>% 
+  select('Year', 'Land Cover Type', 
+          'Area [km²]',
+         'Land Cover Change [%], ref. 2001'
+         
+         ) %>% 
+  xtable()
+
+```
+
+
+
+Linear interpolation on agriculture-levels per year
+```{r}
+
+forest_cover_selected <- transition_curves %>% 
+  filter(type == "agriculture") %>% 
+  group_by(type) %>% 
+   mutate(pct_diff = (sum/first(sum)-1)*100) %>% 
+  mutate('Year' = year,
+         'Land Cover Type' = type,
+         'Area [km²]' = sum,
+         'Land Cover Change [%], ref. 2001' = pct_diff) %>% 
+  select(year, pct_diff, sum)
+
+
+interpolation_df <- data.frame(year = seq(2001,2016)) %>% 
+                    left_join(forest_cover_selected)
+
+
+interpolation_total_cover <- imputeTS::na.interpolation(as.vector(interpolation_df$pct_diff))
+
+
+interpolation_df$pct_diff <- interpolation_total_cover
+
+
+
+
+ggplot(data = interpolation_df, aes(x = year, y = pct_diff))+
+  geom_point()
+
+  
+```
+
+
+
+
