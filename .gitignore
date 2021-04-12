@@ -37,3 +37,19 @@ vignettes/*.pdf
 
 # R Environment Variables
 .Renviron
+
+
+# MMP Data
+socio_economic_mmp_data/mmp_data/*.csv
+
+
+# GIS Data
+land_cover_analysis/1997
+land_cover_analysis/2001
+land_cover_analysis/2005
+land_cover_analysis/2009
+land_cover_analysis/2013
+land_cover_analysis/2016
+land_cover_analysis/states
+land_cover_analysis/municipality_data
+
